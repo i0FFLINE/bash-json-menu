@@ -1,0 +1,217 @@
+#!/bin/bash
+
+# ============================================
+# MODULE REFERENCE RESOLUTION
+# ============================================
+find_project_root() {
+    local current_dir="$1"
+    local original_dir="$current_dir"
+
+    # Игнорируем menu.json в текущей директории (это может быть модуль)
+    # Ищем menu.json в родительских директориях
+    current_dir=$(dirname "$current_dir")
+
+    # Поднимаемся вверх по директориям, пока не найдем menu.json
+    while [ "$current_dir" != "/" ]; do
+        # Проверяем, есть ли menu.json в текущей директории
+        if [ -f "$current_dir/menu.json" ]; then
+            echo "$current_dir"
+            return 0
+        fi
+
+        current_dir=$(dirname "$current_dir")
+    done
+
+    # Если не нашли корневой menu.json, используем родительскую директорию
+    echo "$(dirname "$original_dir")"
+}
+
+# ============================================
+# TRIGGER ITEM FINDER
+# ============================================
+find_trigger_item() {
+    local cmd="$1"
+
+    # Порядок поиска:
+    # 1. local -> menu
+    # 2. local -> _system -> _before & _after
+    # 3. root -> menu
+    # 4. root -> _system -> _before & _after
+
+    local search_files=()
+
+    # Добавляем локальное меню
+    if [ -n "$BASE_MENU" ] && [ -f "$BASE_MENU" ]; then
+        search_files+=("$BASE_MENU")
+    fi
+
+    # Добавляем корневое меню
+    if [ -n "$ROOT_MENU" ] && [ -f "$ROOT_MENU" ] && [ "$ROOT_MENU" != "$BASE_MENU" ]; then
+        search_files+=("$ROOT_MENU")
+    fi
+
+    for file in "${search_files[@]}"; do
+        # 1. Search in .menu
+        local menu_path=".menu.\"${cmd}\""
+        local value=$(jq -r "${menu_path} // empty" "$file" 2>/dev/null)
+        if [ -n "$value" ] && [ "$value" != "null" ]; then
+            echo "${file}|${menu_path}"
+            return 0
+        fi
+    done
+
+    for file in "${search_files[@]}"; do
+        # 2. Search in ._system._before
+        local before_path="._system._before.\"${cmd}\""
+        local value=$(jq -r "${before_path} // empty" "$file" 2>/dev/null)
+        if [ -n "$value" ] && [ "$value" != "null" ]; then
+            echo "${file}|${before_path}"
+            return 0
+        fi
+
+        # 3. Search in ._system._after
+        local after_path="._system._after.\"${cmd}\""
+        value=$(jq -r "${after_path} // empty" "$file" 2>/dev/null)
+        if [ -n "$value" ] && [ "$value" != "null" ]; then
+            echo "${file}|${after_path}"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+# ============================================
+# SEPARATED ITEM EXECUTION METHODS
+# ============================================
+
+execute_trigger_command() {
+    local cmd="$1"
+
+    local resolved=$(resolve_module_reference "$cmd")
+    local ref_type=$(echo "$resolved" | cut -d'|' -f1)
+    local target_json=$(echo "$resolved" | cut -d'|' -f2)
+    local target_item=$(echo "$resolved" | cut -d'|' -f3)
+
+    case "$ref_type" in
+        "local")
+            local found=$(find_trigger_item "$cmd")
+            if [ $? -eq 0 ]; then
+                local found_file=$(echo "$found" | cut -d'|' -f1)
+                local found_path=$(echo "$found" | cut -d'|' -f2)
+                if [ -n "$found_file" ] && [ -f "$found_file" ]; then
+                    execute_item "$found_file" "$found_path" "true" ""
+                else
+                    echo "Error: Trigger file not found or empty: '$found_file'"
+                fi
+            else
+                eval "$cmd"
+            fi
+            ;;
+        "root"|"module")
+            if [ -f "$target_json" ]; then
+                local target_path=".menu.\"$target_item\""
+                execute_item "$target_json" "$target_path" "true" ""
+            else
+                echo "Error: Module file not found: $target_json"
+            fi
+            ;;
+        *)
+            eval "$cmd"
+            ;;
+    esac
+}
+
+execute_before_commands() {
+    local json_file="$1"
+    local json_path="$2"
+
+    local has_before=$(jq -r "$json_path._before | length // 0" "$json_file" 2>/dev/null)
+    if [ "$has_before" -gt 0 ] 2>/dev/null; then
+        local before_items
+        before_items=$(jq -r "$json_path._before[]?" "$json_file" 2>/dev/null)
+        while IFS= read -r before_cmd; do
+            if [ -n "$before_cmd" ]; then
+                execute_trigger_command "$before_cmd"
+            fi
+        done <<< "$before_items"
+    fi
+}
+
+execute_main_commands() {
+    local json_file="$1"
+    local json_path="$2"
+
+    local has_commands=$(jq -r "$json_path._commands | length // 0" "$json_file" 2>/dev/null)
+    if [ "$has_commands" -gt 0 ] 2>/dev/null; then
+        local commands
+        commands=$(jq -r "$json_path._commands[]?" "$json_file" 2>/dev/null)
+        echo -e "\033[0m"
+        tput cnorm
+        while IFS= read -r cmd; do
+            if [ -n "$cmd" ]; then
+                eval "$cmd"
+            fi
+        done <<< "$commands"
+        echo -e "\033[0m"
+    fi
+}
+
+execute_then_commands() {
+    local json_file="$1"
+    local json_path="$2"
+
+    local has_then=$(jq -r "$json_path._then | length // 0" "$json_file" 2>/dev/null)
+    if [ "$has_then" -gt 0 ] 2>/dev/null; then
+        local then_items
+        then_items=$(jq -r "$json_path._then[]?" "$json_file" 2>/dev/null)
+        while IFS= read -r then_cmd; do
+            if [ -n "$then_cmd" ]; then
+                execute_trigger_command "$then_cmd"
+            fi
+        done <<< "$then_items"
+    fi
+}
+
+# ============================================
+# UNIFIED ITEM EXECUTION
+# ============================================
+
+execute_item() {
+    local json_file="$1"
+    local json_path="$2"
+    local from_trigger="${3:-false}"
+    local choice="$4"
+
+    local value_path="$json_path"
+
+    local item_type=$(jq -r "$value_path | type" "$json_file" 2>/dev/null)
+
+    case "$item_type" in
+        "string")
+            local value=$(jq -r "$value_path" "$json_file" 2>/dev/null)
+            if [ "$value" != "null" ] && [ -n "$value" ]; then
+                echo -e "\033[0m"
+                tput cnorm
+                eval "$value"
+                echo -e "\033[0m"
+            fi
+            ;;
+        "object")
+            execute_before_commands "$json_file" "$value_path"
+            execute_main_commands "$json_file" "$value_path"
+            execute_then_commands "$json_file" "$value_path"
+            ;;
+        *)
+            echo "Unknown type: $item_type"
+            ;;
+    esac
+
+    if [ "$from_trigger" != "true" ]; then
+        case "$MENU_EXIT_BEHAVIOR" in
+            "console") exit 0 ;;
+            "root") return 2 ;;
+            "menu") return 0 ;;
+        esac
+    fi
+}
