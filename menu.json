@@ -1,0 +1,16 @@
+{
+  "menu": {
+    "Root Action 1": "echo 'Root -> Root Action 1'",
+    "Root Action 2": "echo 'Root -> Root Action 2'",
+    "Test Cross-Module": {
+      "_before": ["@mod1:Module1 Action 1"],
+      "_commands": ["echo 'Root -> Test Cross-Module'"],
+      "_then": ["@mod2:Module2 Action 2"]
+    }
+  },
+  "_system": {
+    "_after": {
+      "Exit": "exit 0"
+    }
+  }
+}

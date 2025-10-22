@@ -1,0 +1,15 @@
+{
+  "menu": {
+    "Module1 Action 1": "echo 'Mod1 -> Module1 Action 1'",
+    "Module1 Action 2": "echo 'Mod1 -> Module1 Action 2'",
+    "Call Mod2": {
+      "_before": ["@mod2:Module2 Action 1"],
+      "_commands": ["echo 'Mod1 -> Call Mod2'"]
+    }
+  },
+  "_system": {
+    "_after": {
+      "Exit": "exit 0"
+    }
+  }
+}
