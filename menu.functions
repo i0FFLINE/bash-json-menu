@@ -3,6 +3,25 @@
 # ============================================
 # MODULE REFERENCE RESOLUTION
 # ============================================
+resolve_module_reference() {
+    local ref="$1"
+    local project_root=$(find_project_root "$PWD")
+
+    if [[ "$ref" == @*:* ]]; then
+        local module="${ref#@}"
+        module="${module%%:*}"
+        local item="${ref#*:}"
+
+        if [ "$module" = "root" ]; then
+            echo "root|$project_root/menu.json|$item"
+        else
+            echo "module|$project_root/$SCAN_DIR/$module/menu.json|$item"
+        fi
+    else
+        echo "local||$ref"
+    fi
+}
+
 find_project_root() {
     local current_dir="$1"
     local original_dir="$current_dir"
