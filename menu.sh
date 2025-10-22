@@ -3,7 +3,6 @@
 # ============================================
 # CONFIGURATION
 # ============================================
-
 SCAN_DIR="${SCAN_DIR:-modules}"
 MENU_EXIT_BEHAVIOR="${MENU_EXIT_BEHAVIOR:-console}"
 TITLE=${TITLE:-""}
@@ -11,7 +10,6 @@ TITLE=${TITLE:-""}
 # ============================================
 # SETUP
 # ============================================
-
 clear
 
 cleanup() {
@@ -41,7 +39,6 @@ TITLE() {
 # ============================================
 # MODE DETECTION
 # ============================================
-
 detect_mode() {
     if [ -d "$SCAN_DIR" ]; then
         echo "root"
@@ -53,7 +50,6 @@ detect_mode() {
 # ============================================
 # MODULE REFERENCE RESOLUTION
 # ============================================
-
 find_project_root() {
     local current_dir="$1"
     if [ -d "$current_dir/$SCAN_DIR" ]; then
@@ -91,7 +87,6 @@ resolve_module_reference() {
 # ============================================
 # DYNAMIC MENU GENERATION
 # ============================================
-
 generate_dynamic_menu() {
     local base_menu="$1"
     local mode="$2"
@@ -126,12 +121,11 @@ generate_dynamic_menu() {
     fi
 
     # Scan for modules
-    local scan_pattern="*/"
+    local scan_pattern="*"
     if [ "$mode" = "root" ]; then
-        scan_pattern="$SCAN_DIR/*/";
+        scan_pattern="$SCAN_DIR/*"
     fi
     for subdir in $scan_pattern; do
-        subdir="${subdir%/}"
         if [ -d "$subdir" ] && [ -f "$subdir/menu.json" ]; then
             local dir_name=$(basename "$subdir")
             local display_name=$(echo "$dir_name" | tr '-' ' ' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2))}1')
@@ -156,7 +150,6 @@ generate_dynamic_menu() {
             done <<< "$after_keys"
         fi
     fi
-
     echo "}" >> "$temp_menu"
     echo "$temp_menu"
 }
@@ -164,33 +157,28 @@ generate_dynamic_menu() {
 # ============================================
 # TRIGGER ITEM FINDER
 # ============================================
-
 find_trigger_item() {
     local cmd="$1"
     local search_files=("${BASE_MENU:-menu.json}")
-    # Если есть ROOT_MENU - добавляем в поиск
     if [ -n "$ROOT_MENU" ] && [ "$ROOT_MENU" != "$BASE_MENU" ]; then
         search_files+=("$ROOT_MENU")
     fi
-
     for file in "${search_files[@]}"; do
-        # Поиск в .menu
+        # Search in .menu
         local menu_path=".menu.\"${cmd}\""
         local value=$(jq -r "${menu_path} // empty" "$file" 2>/dev/null)
         if [ -n "$value" ] && [ "$value" != "null" ]; then
             echo "${file}|${menu_path}"
             return 0
         fi
-
-        # Поиск в ._system._before
+        # Search in ._system._before
         local before_path="._system._before.\"${cmd}\""
         value=$(jq -r "${before_path} // empty" "$file" 2>/dev/null)
         if [ -n "$value" ] && [ "$value" != "null" ]; then
             echo "${file}|${before_path}"
             return 0
         fi
-
-        # Поиск в ._system._after
+        # Search in ._system._after
         local after_path="._system._after.\"${cmd}\""
         value=$(jq -r "${after_path} // empty" "$file" 2>/dev/null)
         if [ -n "$value" ] && [ "$value" != "null" ]; then
@@ -202,28 +190,27 @@ find_trigger_item() {
 }
 
 # ============================================
-# NEW: UNIFIED ITEM EXECUTION
+# UNIFIED ITEM EXECUTION
 # ============================================
 
 execute_item() {
     local json_file="$1"
     local json_path="$2"
     local from_trigger="${3:-false}"
-    local choice="$4"  # Only used when json_path="."
+    local choice="$4"
 
-    # Get the actual value path
+    # Корректное ветвление пути: для корня "." всегда использовать ".\"$choice\""
     local value_path
     if [ "$from_trigger" = "true" ]; then
         value_path="$json_path"
     elif [ "$json_path" = "." ]; then
         value_path=".\"$choice\""
     else
-        value_path="$json_path .\"$choice\""
+        value_path="$json_path"
     fi
 
-    # Determine type
     local item_type=$(jq -r "$value_path | type" "$json_file" 2>/dev/null)
-    
+
     case "$item_type" in
         "string")
             local value=$(jq -r "$value_path" "$json_file" 2>/dev/null)
@@ -235,7 +222,6 @@ execute_item() {
             fi
             ;;
         "object")
-            # Check for before triggers
             local has_before=$(jq -r "$value_path._before | length // 0" "$json_file" 2>/dev/null)
             if [ "$has_before" -gt 0 ] 2>/dev/null; then
                 local before_items
@@ -266,7 +252,6 @@ execute_item() {
                                 fi
                                 ;;
                             *)
-                                # Direct string command in array
                                 eval "$before_cmd"
                                 ;;
                         esac
@@ -274,7 +259,6 @@ execute_item() {
                 done
             fi
 
-            # Execute commands
             local has_commands=$(jq -r "$value_path._commands | length // 0" "$json_file" 2>/dev/null)
             if [ "$has_commands" -gt 0 ] 2>/dev/null; then
                 local commands
@@ -289,7 +273,6 @@ execute_item() {
                 echo -e "\033[0m"
             fi
 
-            # Check for then triggers
             local has_then=$(jq -r "$value_path._then | length // 0" "$json_file" 2>/dev/null)
             if [ "$has_then" -gt 0 ] 2>/dev/null; then
                 local then_items
@@ -304,7 +287,10 @@ execute_item() {
                                 if [ $? -eq 0 ]; then
                                     local found_file=$(echo "$found" | cut -d'|' -f1)
                                     local found_path=$(echo "$found" | cut -d'|' -f2)
-                                    execute_item "$found_file" "$found_path" "true" ""
+                                    local result=$(execute_item "$found_file" "$found_path" "true" "")
+                                    if [[ "$result" == "2" ]]; then
+                                        return 2
+                                    fi
                                 else
                                     echo "Error: Trigger item not found: $then_cmd"
                                 fi
@@ -314,13 +300,15 @@ execute_item() {
                                 local target_item=$(echo "$resolved" | cut -d'|' -f3)
                                 if [ -f "$target_json" ]; then
                                     local target_path=".menu.\"$target_item\""
-                                    execute_item "$target_json" "$target_path" "true" ""
+                                    local result=$(execute_item "$target_json" "$target_path" "true" "")
+                                    if [[ "$result" == "2" ]]; then
+                                        return 2
+                                    fi
                                 else
                                     echo "Error: Module file not found: $target_json"
                                 fi
                                 ;;
                             *)
-                                # Direct string command in array
                                 eval "$then_cmd"
                                 ;;
                         esac
@@ -333,7 +321,6 @@ execute_item() {
             ;;
     esac
 
-    # Exit behavior (only for direct menu selections, not triggers)
     if [ "$from_trigger" != "true" ]; then
         case "$MENU_EXIT_BEHAVIOR" in
             "console") exit 0 ;;
@@ -344,7 +331,7 @@ execute_item() {
 }
 
 # ============================================
-# MENU DISPLAY
+# MENU DISPLAY (ИСПРАВЛЕНО)
 # ============================================
 
 show_menu() {
@@ -358,92 +345,62 @@ show_menu() {
         whiptail --title "Error" --msgbox "No menu items found" 10 50
         return 1
     fi
-
     local menu_items=()
     while IFS= read -r key; do
         menu_items+=("$key" "")
     done <<< "$keys"
-
     local choice
     choice=$(whiptail --title "$title" --menu "Choose an option:" 20 70 12 \
         "${menu_items[@]}" 3>&1 1>&2 2>&3)
-
     if [ $? -ne 0 ]; then
         return 1
     fi
 
-    # Execute the chosen item
-    local next_path
-    if [ "$json_path" = "." ]; then
-        next_path="."
+    # для корня - путь . (верхний уровень), для подменю - строим путь рекурсивно
+    local jq_path="$json_path"
+    if [ "$jq_path" = "." ]; then
+        jq_path=".\"$choice\""
     else
-        next_path="$json_path"
+        jq_path="$jq_path.\"$choice\""
     fi
+    local value_type=$(jq -r "$jq_path | type" "$json_file" 2>/dev/null)
 
-    local value_type=$(jq -r ".\"$choice\" | type" "$json_file" 2>/dev/null)
-    
     case "$value_type" in
         "object")
-            # Check if it's a complex menu item or empty module
-            local has_triggers=$(jq -r ".\"$choice\"._before // .\"$choice\"._commands // .\"$choice\"._then // empty" "$json_file" 2>/dev/null)
-            local is_empty=$(jq -r ".\"$choice\" | length" "$json_file" 2>/dev/null)
-            
-            if [ "$is_empty" = "0" ] || [ -z "$has_triggers" ]; then
-                # Empty object - probably a module
+            local has_triggers=$(jq -r "$jq_path._before // $jq_path._commands // $jq_path._then // empty" "$json_file" 2>/dev/null)
+            local is_empty=$(jq -r "$jq_path | length" "$json_file" 2>/dev/null)
+            if [ "$is_empty" -gt 0 ] && [ -z "$has_triggers" ]; then
+                show_menu "$json_file" "$jq_path" "$title - $choice" "$mode"
+                return
+            elif [ "$is_empty" = "0" ]; then
                 local module_dir=$(echo "$choice" | sed 's/Shared //' | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
                 if [ "$mode" = "root" ]; then
                     module_dir="$SCAN_DIR/$module_dir"
                 fi
                 if [ -f "$module_dir/menu.sh" ] && [ -f "$module_dir/menu.json" ]; then
-                    (cd "$module_dir" && exec bash menu.sh)
+                    (cd "$module_dir" && bash menu.sh)
+                    return
                 else
                     whiptail --title "Error" --msgbox "Module not found: $module_dir" 10 50
+                    return 1
                 fi
             else
-                # Complex object - execute with triggers
-                execute_item "$json_file" "." "false" "$choice"
-                local exit_code=$?
-                if [ $exit_code -eq 2 ]; then
-                    return 2
-                fi
-                case "$MENU_EXIT_BEHAVIOR" in
-                    "console")
-                        read -p "Press Enter to exit..."
-                        exit 0
-                        ;;
-                    "menu")
-                        read -p "Press Enter to continue..."
-                        ;;
-                    "root")
-                        read -p "Press Enter to continue..."
-                        return 2
-                        ;;
-                esac
+                execute_item "$json_file" "$jq_path" "false" ""
+                return
             fi
             ;;
         "string")
-            # Simple string command
-            execute_item "$json_file" "." "false" "$choice"
-            local exit_code=$?
-            if [ $exit_code -eq 2 ]; then
-                return 2
+            # Только для корня пунктов - путь всегда . (иначе вложенные строки выпадут)
+            if [ "$json_path" = "." ]; then
+                execute_item "$json_file" "." "false" "$choice"
+            else
+                execute_item "$json_file" "$jq_path" "false" ""
             fi
-            case "$MENU_EXIT_BEHAVIOR" in
-                "console")
-                    read -p "Press Enter to exit..."
-                    exit 0
-                    ;;
-                "menu")
-                    read -p "Press Enter to continue..."
-                    ;;
-                "root")
-                    read -p "Press Enter to continue..."
-                    return 2
-                    ;;
-            esac
+            return
             ;;
         *)
-            whiptail --title "Error" --msgbox "Unknown menu type: $value_type" 10 50
+            whiptail --title "Error" --msgbox "Unknown menu type: $value_type for '$choice'" 10 50
+            return 1
             ;;
     esac
 }
@@ -451,27 +408,21 @@ show_menu() {
 # ============================================
 # MAIN
 # ============================================
-
 main() {
     check_dependencies
     MODE=$(detect_mode)
     BASE_MENU="menu.json"
-
-    # Устанавливаем ROOT_MENU для fallback поиска
     if [ "$MODE" = "local" ]; then
         PROJECT_ROOT=$(find_project_root "$PWD")
         ROOT_MENU="$PROJECT_ROOT/menu.json"
     fi
-
     MENU_FILE=$(generate_dynamic_menu "$BASE_MENU" "$MODE")
     trap "rm -f '$MENU_FILE'; cleanup" EXIT INT TERM
-
     if [ "$MODE" = "root" ]; then
         TITLE="Main Menu"
     else
         TITLE="$(basename "$PWD" | tr '-' ' ' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2))}1') Menu"
     fi
-
     while true; do
         show_menu "$MENU_FILE" "." "$TITLE" "$MODE"
         local menu_result=$?
@@ -483,7 +434,6 @@ main() {
             fi
         fi
     done
-
     cleanup
 }
 
