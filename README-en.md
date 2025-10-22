@@ -70,10 +70,10 @@ The script preserves element order from JSON using `keys_unsorted[]`.
 {
   "_system": {
     "_before": {
-      "1List all": { "_commands": [...] }
+      "List all": { "_commands": [...] }
     },
     "_after": {
-      "1Prune": "docker system prune -f",
+      "Prune": "docker system prune -f",
       "Exit": "exit 0"
     }
   },
@@ -86,12 +86,12 @@ The script preserves element order from JSON using `keys_unsorted[]`.
 ```
 
 **Displays as:**
-1. 1List all
+1. List all
 2. Rebuild
 3. Build
 4. Remove
 5. [Dynamic modules]
-6. 1Prune
+6. Prune
 7. Exit
 
 ### Complete Structure Example

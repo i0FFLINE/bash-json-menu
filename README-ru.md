@@ -70,10 +70,10 @@
 {
   "_system": {
     "_before": {
-      "1List all": { "_commands": [...] }
+      "List all": { "_commands": [...] }
     },
     "_after": {
-      "1Prune": "docker system prune -f",
+      "Prune": "docker system prune -f",
       "Выход": "exit 0"
     }
   },
@@ -86,12 +86,12 @@
 ```
 
 **Отображается как:**
-1. 1List all
+1. List all
 2. Rebuild
 3. Build
 4. Remove
 5. [Динамические модули]
-6. 1Prune
+6. Prune
 7. Выход
 
 ### Пример полной структуры
