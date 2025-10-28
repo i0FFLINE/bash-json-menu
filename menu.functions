@@ -3,36 +3,13 @@
 # ============================================
 # MODULE REFERENCE RESOLUTION
 # ============================================
-resolve_module_reference() {
-    local ref="$1"
-    local project_root=$(find_project_root "$PWD")
-
-    if [[ "$ref" == @*:* ]]; then
-        local module="${ref#@}"
-        module="${module%%:*}"
-        local item="${ref#*:}"
-
-        if [ "$module" = "root" ]; then
-            echo "root|$project_root/menu.json|$item"
-        else
-            echo "module|$project_root/$SCAN_DIR/$module/menu.json|$item"
-        fi
-    else
-        echo "local||$ref"
-    fi
-}
-
 find_project_root() {
     local current_dir="$1"
     local original_dir="$current_dir"
 
-    # Игнорируем menu.json в текущей директории (это может быть модуль)
-    # Ищем menu.json в родительских директориях
     current_dir=$(dirname "$current_dir")
 
-    # Поднимаемся вверх по директориям, пока не найдем menu.json
     while [ "$current_dir" != "/" ]; do
-        # Проверяем, есть ли menu.json в текущей директории
         if [ -f "$current_dir/menu.json" ]; then
             echo "$current_dir"
             return 0
@@ -41,7 +18,6 @@ find_project_root() {
         current_dir=$(dirname "$current_dir")
     done
 
-    # Если не нашли корневой menu.json, используем родительскую директорию
     echo "$(dirname "$original_dir")"
 }
 
@@ -51,20 +27,12 @@ find_project_root() {
 find_trigger_item() {
     local cmd="$1"
 
-    # Порядок поиска:
-    # 1. local -> menu
-    # 2. local -> _system -> _before & _after
-    # 3. root -> menu
-    # 4. root -> _system -> _before & _after
-
     local search_files=()
 
-    # Добавляем локальное меню
     if [ -n "$BASE_MENU" ] && [ -f "$BASE_MENU" ]; then
         search_files+=("$BASE_MENU")
     fi
 
-    # Добавляем корневое меню
     if [ -n "$ROOT_MENU" ] && [ -f "$ROOT_MENU" ] && [ "$ROOT_MENU" != "$BASE_MENU" ]; then
         search_files+=("$ROOT_MENU")
     fi
@@ -108,6 +76,7 @@ execute_trigger_command() {
     local cmd="$1"
 
     local resolved=$(resolve_module_reference "$cmd")
+
     local ref_type=$(echo "$resolved" | cut -d'|' -f1)
     local target_json=$(echo "$resolved" | cut -d'|' -f2)
     local target_item=$(echo "$resolved" | cut -d'|' -f3)
@@ -197,6 +166,8 @@ execute_then_commands() {
 # ============================================
 
 execute_item() {
+    load_menu_config
+    
     local json_file="$1"
     local json_path="$2"
     local from_trigger="${3:-false}"
@@ -227,11 +198,7 @@ execute_item() {
     esac
 
     if [ "$from_trigger" != "true" ]; then
-        case "$MENU_EXIT_BEHAVIOR" in
-            "console") exit 0 ;;
-            "root") return 2 ;;
-            "menu") return 0 ;;
-        esac
+        exit 0
     fi
 }
 
@@ -263,7 +230,6 @@ resolve_module_reference() {
             if [ -d "$module_dir" ] && [ -f "$module_dir/menu.json" ]; then
                 local module_name=$(basename "$module_dir")
                 local display_name=$(echo "$module_name" | tr '-' ' ' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2))}1')
-                
                 local value=$(jq -r ".menu.\"$cmd\" // ._system._before.\"$cmd\" // ._system._after.\"$cmd\" // empty" "$module_dir/menu.json" 2>/dev/null)
                 if [ -n "$value" ] && [ "$value" != "null" ]; then
                     echo "module|$module_dir/menu.json|$cmd"

@@ -22,13 +22,8 @@ fi
 # ============================================
 # CONFIGURATION
 # ============================================
-if [ -f "../../menu.config" ]; then
-    source ../../menu.config
-elif [ -f "../menu.config" ]; then
-    source ../menu.config
-elif [ -f "menu.config" ]; then
-    source menu.config
-fi
+SCAN_DIR="${SCAN_DIR:-modules}"
+TITLE=${TITLE:-""}
 
 # ============================================
 # SETUP
@@ -143,6 +138,9 @@ generate_dynamic_menu() {
 # ============================================
 # MENU DISPLAY
 # ============================================
+# ============================================
+# MENU DISPLAY
+# ============================================
 show_menu() {
     local json_file="$1"
     local json_path="${2:-.}"
@@ -165,7 +163,6 @@ show_menu() {
         return 1
     fi
 
-    # Построение пути для выбранного элемента
     local jq_path
     if [ "$json_path" = "." ]; then
         jq_path=".\"$choice\""
@@ -177,29 +174,24 @@ show_menu() {
 
     case "$value_type" in
         "object")
-            # Проверяем, есть ли триггеры (_before, _commands, _then)
             local has_triggers=$(jq -r "$jq_path | ._before // ._commands // ._then // empty" "$json_file" 2>/dev/null)
 
-            # Проверяем, есть ли дочерние элементы (подменю)
             local child_keys=$(jq -r "$jq_path | keys_unsorted[]" "$json_file" 2>/dev/null | grep -v '^_before$' | grep -v '^_commands$' | grep -v '^_then$' | head -1)
 
             if [ -n "$has_triggers" ]; then
-                # Это команда с триггерами - выполняем
                 execute_item "$json_file" "$jq_path" "false" ""
                 return
             elif [ -n "$child_keys" ]; then
-                # Это подменю - показываем рекурсивно
                 show_menu "$json_file" "$jq_path" "$title - $choice" "$mode"
                 return
             else
-                # Пустой объект - проверяем модуль
                 local module_dir=$(echo "$choice" | sed 's/Shared //' | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
                 if [ "$mode" = "root" ]; then
                     module_dir="$SCAN_DIR/$module_dir"
                 fi
                 if [ -f "$module_dir/menu.sh" ] && [ -f "$module_dir/menu.json" ]; then
                     (cd "$module_dir" && bash menu.sh)
-                    return
+                    exit 0
                 else
                     whiptail --title "Error" --msgbox "Module not found: $module_dir" 10 50
                     return 1
@@ -207,7 +199,6 @@ show_menu() {
             fi
             ;;
         "string")
-            # Простая команда - выполняем
             execute_item "$json_file" "$jq_path" "false" ""
             return
             ;;
@@ -241,10 +232,6 @@ main() {
         local menu_result=$?
         if [ $menu_result -eq 1 ]; then
             break
-        elif [ $menu_result -eq 2 ]; then
-            if [ "$MODE" = "local" ]; then
-                exit 0
-            fi
         fi
     done
     cleanup
