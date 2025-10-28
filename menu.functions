@@ -1,23 +1,42 @@
 #!/bin/bash
 
 # ============================================
+# DEBUG UTILITIES
+# ============================================
+debug() {
+    if [ "$DEBUG" = "true" ]; then
+        echo "DEBUG: $1" >&2
+    fi
+}
+
+debug_section() {
+    if [ "$DEBUG" = "true" ]; then
+        echo "=== DEBUG: $1 ===" >&2
+    fi
+}
+
+# ============================================
 # MODULE REFERENCE RESOLUTION
 # ============================================
 find_project_root() {
     local current_dir="$1"
-    local original_dir="$current_dir"
+    debug_section "FIND PROJECT ROOT"
+    debug "Current dir: $current_dir"
 
+    local original_dir="$current_dir"
     current_dir=$(dirname "$current_dir")
 
     while [ "$current_dir" != "/" ]; do
+        debug "Checking: $current_dir"
         if [ -f "$current_dir/menu.json" ]; then
+            debug "Found project root: $current_dir"
             echo "$current_dir"
             return 0
         fi
-
         current_dir=$(dirname "$current_dir")
     done
 
+    debug "No project root found, using: $(dirname "$original_dir")"
     echo "$(dirname "$original_dir")"
 }
 
@@ -26,22 +45,31 @@ find_project_root() {
 # ============================================
 find_trigger_item() {
     local cmd="$1"
+    debug_section "FIND TRIGGER ITEM"
+    debug "Command: $cmd"
 
     local search_files=()
 
     if [ -n "$BASE_MENU" ] && [ -f "$BASE_MENU" ]; then
         search_files+=("$BASE_MENU")
+        debug "Added BASE_MENU: $BASE_MENU"
     fi
 
     if [ -n "$ROOT_MENU" ] && [ -f "$ROOT_MENU" ] && [ "$ROOT_MENU" != "$BASE_MENU" ]; then
         search_files+=("$ROOT_MENU")
+        debug "Added ROOT_MENU: $ROOT_MENU"
     fi
 
+    debug "Search files: ${search_files[@]}"
+
     for file in "${search_files[@]}"; do
+        debug "Searching in file: $file"
         # 1. Search in .menu
         local menu_path=".menu.\"${cmd}\""
         local value=$(jq -r "${menu_path} // empty" "$file" 2>/dev/null)
+        debug "Menu path $menu_path value: $value"
         if [ -n "$value" ] && [ "$value" != "null" ]; then
+            debug "Found in menu: $file|$menu_path"
             echo "${file}|${menu_path}"
             return 0
         fi
@@ -51,7 +79,9 @@ find_trigger_item() {
         # 2. Search in ._system._before
         local before_path="._system._before.\"${cmd}\""
         local value=$(jq -r "${before_path} // empty" "$file" 2>/dev/null)
+        debug "Before path $before_path value: $value"
         if [ -n "$value" ] && [ "$value" != "null" ]; then
+            debug "Found in _before: $file|$before_path"
             echo "${file}|${before_path}"
             return 0
         fi
@@ -59,52 +89,66 @@ find_trigger_item() {
         # 3. Search in ._system._after
         local after_path="._system._after.\"${cmd}\""
         value=$(jq -r "${after_path} // empty" "$file" 2>/dev/null)
+        debug "After path $after_path value: $value"
         if [ -n "$value" ] && [ "$value" != "null" ]; then
+            debug "Found in _after: $file|$after_path"
             echo "${file}|${after_path}"
             return 0
         fi
     done
 
+    debug "Trigger item not found"
     return 1
 }
 
 # ============================================
 # SEPARATED ITEM EXECUTION METHODS
 # ============================================
-
 execute_trigger_command() {
     local cmd="$1"
+    debug_section "EXECUTE TRIGGER COMMAND"
+    debug "Command: $cmd"
 
     local resolved=$(resolve_module_reference "$cmd")
+    debug "Resolved: $resolved"
 
     local ref_type=$(echo "$resolved" | cut -d'|' -f1)
     local target_json=$(echo "$resolved" | cut -d'|' -f2)
     local target_item=$(echo "$resolved" | cut -d'|' -f3)
 
+    debug "ref_type: $ref_type, target_json: $target_json, target_item: $target_item"
+
     case "$ref_type" in
         "local")
+            debug "Processing as local command"
             local found=$(find_trigger_item "$cmd")
             if [ $? -eq 0 ]; then
                 local found_file=$(echo "$found" | cut -d'|' -f1)
                 local found_path=$(echo "$found" | cut -d'|' -f2)
+                debug "Found trigger: file=$found_file, path=$found_path"
                 if [ -n "$found_file" ] && [ -f "$found_file" ]; then
                     execute_item "$found_file" "$found_path" "true" ""
                 else
                     echo "Error: Trigger file not found or empty: '$found_file'"
                 fi
             else
+                debug "Executing as eval command"
                 eval "$cmd"
             fi
             ;;
         "root"|"module")
+            debug "Processing as $ref_type command"
             if [ -f "$target_json" ]; then
-                local target_path=".menu.\"$target_item\""
+                # Используем переданный путь как есть, а не добавляем .menu
+                local target_path="$target_item"
+                debug "Executing item: $target_json, $target_path"
                 execute_item "$target_json" "$target_path" "true" ""
             else
                 echo "Error: Module file not found: $target_json"
             fi
             ;;
         *)
+            debug "Executing as default eval command"
             eval "$cmd"
             ;;
     esac
@@ -113,13 +157,17 @@ execute_trigger_command() {
 execute_before_commands() {
     local json_file="$1"
     local json_path="$2"
+    debug_section "EXECUTE BEFORE COMMANDS"
+    debug "JSON file: $json_file, path: $json_path"
 
     local has_before=$(jq -r "$json_path._before | length // 0" "$json_file" 2>/dev/null)
+    debug "Has before commands: $has_before"
     if [ "$has_before" -gt 0 ] 2>/dev/null; then
         local before_items
         before_items=$(jq -r "$json_path._before[]?" "$json_file" 2>/dev/null)
         while IFS= read -r before_cmd; do
             if [ -n "$before_cmd" ]; then
+                debug "Executing before command: $before_cmd"
                 execute_trigger_command "$before_cmd"
             fi
         done <<< "$before_items"
@@ -129,8 +177,11 @@ execute_before_commands() {
 execute_main_commands() {
     local json_file="$1"
     local json_path="$2"
+    debug_section "EXECUTE MAIN COMMANDS"
+    debug "JSON file: $json_file, path: $json_path"
 
     local has_commands=$(jq -r "$json_path._commands | length // 0" "$json_file" 2>/dev/null)
+    debug "Has main commands: $has_commands"
     if [ "$has_commands" -gt 0 ] 2>/dev/null; then
         local commands
         commands=$(jq -r "$json_path._commands[]?" "$json_file" 2>/dev/null)
@@ -138,6 +189,7 @@ execute_main_commands() {
         tput cnorm
         while IFS= read -r cmd; do
             if [ -n "$cmd" ]; then
+                debug "Executing main command: $cmd"
                 eval "$cmd"
             fi
         done <<< "$commands"
@@ -148,13 +200,17 @@ execute_main_commands() {
 execute_then_commands() {
     local json_file="$1"
     local json_path="$2"
+    debug_section "EXECUTE THEN COMMANDS"
+    debug "JSON file: $json_file, path: $json_path"
 
     local has_then=$(jq -r "$json_path._then | length // 0" "$json_file" 2>/dev/null)
+    debug "Has then commands: $has_then"
     if [ "$has_then" -gt 0 ] 2>/dev/null; then
         local then_items
         then_items=$(jq -r "$json_path._then[]?" "$json_file" 2>/dev/null)
         while IFS= read -r then_cmd; do
             if [ -n "$then_cmd" ]; then
+                debug "Executing then command: $then_cmd"
                 execute_trigger_command "$then_cmd"
             fi
         done <<< "$then_items"
@@ -164,40 +220,58 @@ execute_then_commands() {
 # ============================================
 # UNIFIED ITEM EXECUTION
 # ============================================
-
 execute_item() {
-    load_menu_config
-    
+    debug_section "EXECUTE ITEM"
     local json_file="$1"
     local json_path="$2"
     local from_trigger="${3:-false}"
     local choice="$4"
 
+    debug "json_file: $json_file"
+    debug "json_path: $json_path"
+    debug "from_trigger: $from_trigger"
+    debug "choice: $choice"
+
     local value_path="$json_path"
 
+    # Проверяем существование пути
+    if ! jq -e "$json_path" "$json_file" >/dev/null 2>&1; then
+        debug "ERROR: JSON path does not exist: $json_path"
+        debug "Available keys in file:"
+        jq -r 'keys[]' "$json_file" >&2
+        return 1
+    fi
+
     local item_type=$(jq -r "$value_path | type" "$json_file" 2>/dev/null)
+    debug "item_type: $item_type"
 
     case "$item_type" in
         "string")
+            debug "Processing as string type"
             local value=$(jq -r "$value_path" "$json_file" 2>/dev/null)
+            debug "String value: $value"
             if [ "$value" != "null" ] && [ -n "$value" ]; then
                 echo -e "\033[0m"
                 tput cnorm
+                debug "Evaluating string command"
                 eval "$value"
                 echo -e "\033[0m"
             fi
             ;;
         "object")
+            debug "Processing as object type"
             execute_before_commands "$json_file" "$value_path"
             execute_main_commands "$json_file" "$value_path"
             execute_then_commands "$json_file" "$value_path"
             ;;
         *)
+            debug "Unknown type: $item_type"
             echo "Unknown type: $item_type"
             ;;
     esac
 
     if [ "$from_trigger" != "true" ]; then
+        debug "Exiting after execution (not from trigger)"
         exit 0
     fi
 }
@@ -207,36 +281,83 @@ execute_item() {
 # ============================================
 resolve_module_reference() {
     local cmd="$1"
+    debug_section "RESOLVE MODULE REFERENCE"
+    debug "Command: $cmd"
+    debug "PWD: $(pwd)"
+    debug "ROOT_MENU: $ROOT_MENU"
+    debug "SCAN_DIR: $SCAN_DIR"
+    
+    # Если команда уже является полным путем или внешней командой
     if [[ "$cmd" =~ ^/|\./|\.\./|-[a-zA-Z]|^[a-zA-Z0-9_]+= ]]; then
+        debug "External command detected"
         echo "local||$cmd"
         return 0
     fi
+    
+    # 1. Поиск в текущем модуле (локальный menu.json)
     if [ -f "menu.json" ]; then
+        debug "Checking local menu.json"
         local value=$(jq -r ".menu.\"$cmd\" // ._system._before.\"$cmd\" // ._system._after.\"$cmd\" // empty" "menu.json" 2>/dev/null)
+        debug "Local value: $value"
         if [ -n "$value" ] && [ "$value" != "null" ]; then
+            debug "Found in local menu.json"
             echo "local|menu.json|$cmd"
             return 0
         fi
     fi
-    if [ -n "$ROOT_MENU" ] && [ -f "$ROOT_MENU" ] && [ "$ROOT_MENU" != "menu.json" ]; then
-        local value=$(jq -r ".menu.\"$cmd\" // ._system._before.\"$cmd\" // ._system._after.\"$cmd\" // empty" "$ROOT_MENU" 2>/dev/null)
+    
+    # 2. Поиск в корневом menu.json (главное меню)
+    if [ -n "$ROOT_MENU" ] && [ -f "$ROOT_MENU" ]; then
+        debug "Checking root menu: $ROOT_MENU"
+        
+        # Сначала ищем в menu
+        local value=$(jq -r ".menu.\"$cmd\" // empty" "$ROOT_MENU" 2>/dev/null)
+        debug "Root menu value: $value"
         if [ -n "$value" ] && [ "$value" != "null" ]; then
-            echo "root|$ROOT_MENU|$cmd"
+            debug "Found in root .menu"
+            echo "root|$ROOT_MENU|.menu.\"$cmd\""
             return 0
         fi
+        
+        # Затем ищем в _system._before
+        value=$(jq -r "._system._before.\"$cmd\" // empty" "$ROOT_MENU" 2>/dev/null)
+        debug "Root _before value: $value"
+        if [ -n "$value" ] && [ "$value" != "null" ]; then
+            debug "Found in root ._system._before"
+            echo "root|$ROOT_MENU|._system._before.\"$cmd\""
+            return 0
+        fi
+        
+        # Затем ищем в _system._after
+        value=$(jq -r "._system._after.\"$cmd\" // empty" "$ROOT_MENU" 2>/dev/null)
+        debug "Root _after value: $value"
+        if [ -n "$value" ] && [ "$value" != "null" ]; then
+            debug "Found in root ._system._after"
+            echo "root|$ROOT_MENU|._system._after.\"$cmd\""
+            return 0
+        fi
+    else
+        debug "ROOT_MENU not available or not found"
     fi
+    
+    # 3. Поиск в других модулях
     if [ -n "$SCAN_DIR" ] && [ -d "$SCAN_DIR" ]; then
+        debug "Checking other modules in $SCAN_DIR"
         for module_dir in "$SCAN_DIR"/*; do
             if [ -d "$module_dir" ] && [ -f "$module_dir/menu.json" ]; then
-                local module_name=$(basename "$module_dir")
-                local display_name=$(echo "$module_name" | tr '-' ' ' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2))}1')
                 local value=$(jq -r ".menu.\"$cmd\" // ._system._before.\"$cmd\" // ._system._after.\"$cmd\" // empty" "$module_dir/menu.json" 2>/dev/null)
                 if [ -n "$value" ] && [ "$value" != "null" ]; then
+                    debug "Found in module: $module_dir"
                     echo "module|$module_dir/menu.json|$cmd"
                     return 0
                 fi
             fi
         done
+    else
+        debug "SCAN_DIR not available or not found: $SCAN_DIR"
     fi
+    
+    # 4. Если ничего не найдено, считаем локальной командой
+    debug "Not found anywhere, treating as local command"
     echo "local||$cmd"
 }
