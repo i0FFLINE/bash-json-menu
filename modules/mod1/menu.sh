@@ -22,9 +22,13 @@ fi
 # ============================================
 # CONFIGURATION
 # ============================================
-SCAN_DIR="${SCAN_DIR:-modules}"
-MENU_EXIT_BEHAVIOR="${MENU_EXIT_BEHAVIOR:-console}"
-TITLE=${TITLE:-""}
+if [ -f "../../menu.config" ]; then
+    source ../../menu.config
+elif [ -f "../menu.config" ]; then
+    source ../menu.config
+elif [ -f "menu.config" ]; then
+    source menu.config
+fi
 
 # ============================================
 # SETUP

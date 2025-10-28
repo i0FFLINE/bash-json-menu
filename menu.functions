@@ -234,3 +234,43 @@ execute_item() {
         esac
     fi
 }
+
+# ============================================
+# MODULE REFERENCE RESOLUTION
+# ============================================
+resolve_module_reference() {
+    local cmd="$1"
+    if [[ "$cmd" =~ ^/|\./|\.\./|-[a-zA-Z]|^[a-zA-Z0-9_]+= ]]; then
+        echo "local||$cmd"
+        return 0
+    fi
+    if [ -f "menu.json" ]; then
+        local value=$(jq -r ".menu.\"$cmd\" // ._system._before.\"$cmd\" // ._system._after.\"$cmd\" // empty" "menu.json" 2>/dev/null)
+        if [ -n "$value" ] && [ "$value" != "null" ]; then
+            echo "local|menu.json|$cmd"
+            return 0
+        fi
+    fi
+    if [ -n "$ROOT_MENU" ] && [ -f "$ROOT_MENU" ] && [ "$ROOT_MENU" != "menu.json" ]; then
+        local value=$(jq -r ".menu.\"$cmd\" // ._system._before.\"$cmd\" // ._system._after.\"$cmd\" // empty" "$ROOT_MENU" 2>/dev/null)
+        if [ -n "$value" ] && [ "$value" != "null" ]; then
+            echo "root|$ROOT_MENU|$cmd"
+            return 0
+        fi
+    fi
+    if [ -n "$SCAN_DIR" ] && [ -d "$SCAN_DIR" ]; then
+        for module_dir in "$SCAN_DIR"/*; do
+            if [ -d "$module_dir" ] && [ -f "$module_dir/menu.json" ]; then
+                local module_name=$(basename "$module_dir")
+                local display_name=$(echo "$module_name" | tr '-' ' ' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2))}1')
+                
+                local value=$(jq -r ".menu.\"$cmd\" // ._system._before.\"$cmd\" // ._system._after.\"$cmd\" // empty" "$module_dir/menu.json" 2>/dev/null)
+                if [ -n "$value" ] && [ "$value" != "null" ]; then
+                    echo "module|$module_dir/menu.json|$cmd"
+                    return 0
+                fi
+            fi
+        done
+    fi
+    echo "local||$cmd"
+}
