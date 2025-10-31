@@ -136,7 +136,7 @@ generate_dynamic_menu() {
             local dir_name=$(basename "$subdir")
             local display_name=$(echo "$dir_name" | tr '-' ' ' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2))}1')
             if [ "$mode" = "root" ]; then
-                display_name="Shared $display_name"
+                display_name="> $display_name"
             fi
             debug "Found module: $dir_name -> $display_name"
             [ "$first" = false ] && echo "," >> "$temp_menu"
@@ -225,7 +225,7 @@ show_menu() {
                 show_menu "$json_file" "$jq_path" "$title - $choice" "$mode"
                 return
             else
-                local module_dir=$(echo "$choice" | sed 's/Shared //' | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+                local module_dir=$(echo "$choice" | sed 's/> //' | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
                 if [ "$mode" = "root" ]; then
                     module_dir="$SCAN_DIR/$module_dir"
                 fi
